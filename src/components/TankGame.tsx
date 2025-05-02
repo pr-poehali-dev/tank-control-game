@@ -24,13 +24,15 @@ interface Bullet {
 interface Obstacle extends Position {
   width: number;
   height: number;
+  destructible: boolean; // Можно ли разрушить препятствие
 }
 
 const TankGame = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const gameLoopRef = useRef<number | null>(null);
   const [playerTank, setPlayerTank] = useState<Tank>({ 
-    x: 250, 
-    y: 250, 
+    x: 100, 
+    y: 300, 
     angle: 0, 
     alive: true, 
     size: 15 
@@ -45,6 +47,8 @@ const TankGame = () => {
   const [startTime, setStartTime] = useState<number>(Date.now());
   const [gameTime, setGameTime] = useState<string>("00:00");
   const [gameActive, setGameActive] = useState(true);
+  const [waveCompleted, setWaveCompleted] = useState(false);
+  const [newWaveCountdown, setNewWaveCountdown] = useState(0);
 
   // Создание препятствий и начало новой игры
   const initGame = useCallback(() => {
@@ -53,21 +57,33 @@ const TankGame = () => {
     const width = canvasRef.current.width;
     const height = canvasRef.current.height;
     
-    // Создаем препятствия
+    // Создаем игровую базу в левой части карты
+    const baseX = 50;
+    const baseY = height / 2;
+    const baseWidth = 100;
+    const baseHeight = 100;
+    
+    // Создаем препятствия и базу игрока
     const newObstacles: Obstacle[] = [
-      { x: width * 0.2, y: height * 0.2, width: 40, height: 40 },
-      { x: width * 0.8, y: height * 0.2, width: 60, height: 30 },
-      { x: width * 0.2, y: height * 0.8, width: 60, height: 30 },
-      { x: width * 0.8, y: height * 0.8, width: 40, height: 40 },
-      { x: width * 0.5, y: height * 0.5, width: 50, height: 50 },
+      // База игрока - неразрушаемые стены
+      { x: baseX - 30, y: baseY - 50, width: 10, height: 100, destructible: false }, // Левая стенка базы
+      { x: baseX - 30, y: baseY - 50, width: 80, height: 10, destructible: false }, // Верхняя стенка базы
+      { x: baseX - 30, y: baseY + 40, width: 80, height: 10, destructible: false }, // Нижняя стенка базы
+      
+      // Другие препятствия на карте
+      { x: width * 0.4, y: height * 0.2, width: 40, height: 40, destructible: true },
+      { x: width * 0.7, y: height * 0.2, width: 60, height: 30, destructible: true },
+      { x: width * 0.4, y: height * 0.7, width: 60, height: 30, destructible: true },
+      { x: width * 0.7, y: height * 0.7, width: 40, height: 40, destructible: true },
+      { x: width * 0.5, y: height * 0.5, width: 50, height: 50, destructible: true },
     ];
     
     setObstacles(newObstacles);
     
-    // Сбрасываем игровые данные
+    // Сбрасываем игровые данные и устанавливаем игрока в базу
     setPlayerTank({
-      x: width / 2,
-      y: height / 2,
+      x: baseX + 20, // Внутри базы
+      y: baseY,      // Центр базы
       angle: 0,
       alive: true,
       size: 15
@@ -79,6 +95,8 @@ const TankGame = () => {
     setGameOver(false);
     setStartTime(Date.now());
     setGameActive(true);
+    setWaveCompleted(false);
+    setNewWaveCountdown(0);
     
     // Генерируем первую волну противников
     spawnEnemies(1);
@@ -86,6 +104,8 @@ const TankGame = () => {
 
   // Спавн противников в зависимости от номера волны
   const spawnEnemies = useCallback((waveNumber: number) => {
+    console.log(`Spawning enemies for wave ${waveNumber}`);
+    
     if (!canvasRef.current) return;
     
     const canvas = canvasRef.current;
@@ -99,31 +119,51 @@ const TankGame = () => {
       let validPosition = false;
       let enemyX = 0;
       let enemyY = 0;
+      let attempts = 0;
       
       // Пытаемся найти позицию, не пересекающуюся с препятствиями и игроком
-      while (!validPosition) {
-        enemyX = Math.random() * (width - 60) + 30;
+      while (!validPosition && attempts < 100) {
+        attempts++;
+        // Спавним противников только в правой половине карты
+        enemyX = width * 0.6 + Math.random() * (width * 0.35);
         enemyY = Math.random() * (height - 60) + 30;
         
-        // Проверяем, достаточно ли далеко от игрока (минимум 150 пикселей)
+        // Проверяем, достаточно ли далеко от игрока (минимум 200 пикселей)
         const distToPlayer = Math.hypot(enemyX - playerTank.x, enemyY - playerTank.y);
-        if (distToPlayer < 150) continue;
+        if (distToPlayer < 200) continue;
         
         // Проверяем, не находится ли в препятствии
         let collidesWithObstacle = false;
         for (const obstacle of obstacles) {
-          if (checkCollision(
-            { x: enemyX, y: enemyY, width: 30, height: 20 },
-            obstacle
+          if (checkCollisionRect(
+            { x: enemyX - 15, y: enemyY - 10, width: 30, height: 20 },
+            { x: obstacle.x, y: obstacle.y, width: obstacle.width, height: obstacle.height }
           )) {
             collidesWithObstacle = true;
             break;
           }
         }
         
-        if (!collidesWithObstacle) {
+        // Проверяем, не находится ли слишком близко к другим врагам
+        let collidesWithEnemy = false;
+        for (const enemy of newEnemies) {
+          const distance = Math.hypot(enemyX - enemy.x, enemyY - enemy.y);
+          if (distance < 40) {
+            collidesWithEnemy = true;
+            break;
+          }
+        }
+        
+        if (!collidesWithObstacle && !collidesWithEnemy) {
           validPosition = true;
         }
+      }
+      
+      // Если после 100 попыток не удалось найти позицию, размещаем
+      // танк в случайном месте правой части карты
+      if (!validPosition) {
+        enemyX = width * 0.7 + Math.random() * (width * 0.2);
+        enemyY = Math.random() * (height - 100) + 50;
       }
       
       newEnemies.push({
@@ -136,11 +176,12 @@ const TankGame = () => {
     }
     
     setEnemies(newEnemies);
+    setWaveCompleted(false);
   }, [playerTank, obstacles]);
 
   // Проверка на столкновение двух прямоугольников
-  const checkCollision = (rect1: { x: number, y: number, width: number, height: number }, 
-                         rect2: { x: number, y: number, width: number, height: number }) => {
+  const checkCollisionRect = (rect1: { x: number, y: number, width: number, height: number }, 
+                          rect2: { x: number, y: number, width: number, height: number }) => {
     return (
       rect1.x < rect2.x + rect2.width &&
       rect1.x + rect1.width > rect2.x &&
@@ -168,7 +209,12 @@ const TankGame = () => {
     window.addEventListener('resize', handleResize);
     handleResize();
 
-    return () => window.removeEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      if (gameLoopRef.current) {
+        cancelAnimationFrame(gameLoopRef.current);
+      }
+    };
   }, [initGame]);
 
   // Обработка нажатий клавиш
@@ -265,6 +311,29 @@ const TankGame = () => {
     return () => clearInterval(enemyShootInterval);
   }, [enemies, enemyShoot, gameActive]);
 
+  // Эффект для запуска новой волны после завершения текущей
+  useEffect(() => {
+    if (!gameActive || !waveCompleted) return;
+    
+    let countdownTimer: NodeJS.Timeout;
+    
+    if (newWaveCountdown > 0) {
+      countdownTimer = setTimeout(() => {
+        setNewWaveCountdown(prev => prev - 1);
+      }, 1000);
+    } else if (waveCompleted) {
+      // Запускаем новую волну
+      const nextWave = wave + 1;
+      setWave(nextWave);
+      setScore(prev => prev + 1);
+      spawnEnemies(nextWave);
+    }
+    
+    return () => {
+      if (countdownTimer) clearTimeout(countdownTimer);
+    };
+  }, [waveCompleted, newWaveCountdown, wave, gameActive, spawnEnemies]);
+
   // ИИ врага (простое преследование игрока)
   const updateEnemies = useCallback(() => {
     if (!canvasRef.current || !gameActive) return;
@@ -310,9 +379,9 @@ const TankGame = () => {
         // Проверка на столкновение с препятствиями
         let hasCollision = false;
         for (const obstacle of obstacles) {
-          if (checkCollision(
+          if (checkCollisionRect(
             { x: newX - 15, y: newY - 10, width: 30, height: 20 },
-            obstacle
+            { x: obstacle.x, y: obstacle.y, width: obstacle.width, height: obstacle.height }
           )) {
             hasCollision = true;
             break;
@@ -328,6 +397,14 @@ const TankGame = () => {
             }
           }
         });
+        
+        // Проверка на столкновение с игроком
+        if (playerTank.alive) {
+          const playerDistance = Math.hypot(newX - playerTank.x, newY - playerTank.y);
+          if (playerDistance < 35) {
+            hasCollision = true;
+          }
+        }
         
         // Проверка границ экрана
         const tankSize = 15;
@@ -345,11 +422,21 @@ const TankGame = () => {
     );
   }, [playerTank, obstacles, gameActive]);
 
+  // Проверка завершения волны
+  const checkWaveCompletion = useCallback(() => {
+    // Проверяем, все ли враги уничтожены
+    if (enemies.length > 0 && enemies.every(enemy => !enemy.alive) && !waveCompleted) {
+      console.log("Wave completed! Starting next wave soon...");
+      setWaveCompleted(true);
+      setNewWaveCountdown(3); // 3 секунды до следующей волны
+    }
+  }, [enemies, waveCompleted]);
+
   // Игровой цикл
   useEffect(() => {
     if (!gameActive) return;
     
-    const gameLoop = () => {
+    const runGameLoop = () => {
       if (!canvasRef.current) return;
       
       const ctx = canvasRef.current.getContext('2d');
@@ -394,18 +481,25 @@ const TankGame = () => {
       // Рисуем пули
       drawBullets(ctx);
       
-      // Проверяем конец волны
-      if (enemies.length > 0 && enemies.every(enemy => !enemy.alive)) {
-        // Все враги уничтожены
-        const newWave = wave + 1;
-        setWave(newWave);
-        setScore(prevScore => prevScore + 1);
-        spawnEnemies(newWave);
+      // Проверка окончания волны
+      checkWaveCompletion();
+      
+      // Рисуем сообщение о новой волне если необходимо
+      if (waveCompleted && newWaveCountdown > 0) {
+        drawNextWaveMessage(ctx, width, height);
       }
+      
+      // Продолжаем игровой цикл
+      gameLoopRef.current = requestAnimationFrame(runGameLoop);
     };
     
-    const intervalId = setInterval(gameLoop, 16); // ~60 FPS
-    return () => clearInterval(intervalId);
+    gameLoopRef.current = requestAnimationFrame(runGameLoop);
+    
+    return () => {
+      if (gameLoopRef.current) {
+        cancelAnimationFrame(gameLoopRef.current);
+      }
+    };
   }, [
     playerTank, 
     bullets, 
@@ -413,10 +507,25 @@ const TankGame = () => {
     enemies, 
     obstacles, 
     wave, 
-    updateEnemies, 
-    spawnEnemies, 
+    updateEnemies,
+    checkWaveCompletion,
+    waveCompleted,
+    newWaveCountdown,
     gameActive
   ]);
+
+  // Отрисовка сообщения о новой волне
+  const drawNextWaveMessage = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
+    ctx.save();
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.fillRect(width / 2 - 150, height / 2 - 50, 300, 100);
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 24px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(`Волна ${wave} завершена!`, width / 2, height / 2 - 15);
+    ctx.fillText(`Следующая волна через ${newWaveCountdown}...`, width / 2, height / 2 + 20);
+    ctx.restore();
+  };
 
   // Функция отрисовки сетки фона
   const drawGrid = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
@@ -469,10 +578,17 @@ const TankGame = () => {
 
   // Функция отрисовки препятствий
   const drawObstacles = (ctx: CanvasRenderingContext2D) => {
-    ctx.fillStyle = '#555';
-    
     obstacles.forEach(obstacle => {
+      // Неразрушаемые препятствия рисуем темнее
+      ctx.fillStyle = obstacle.destructible ? '#777' : '#444';
       ctx.fillRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
+      
+      // Добавляем рамку для неразрушаемых препятствий
+      if (!obstacle.destructible) {
+        ctx.strokeStyle = '#222';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
+      }
     });
   };
 
@@ -516,12 +632,23 @@ const TankGame = () => {
     // Проверка столкновения с препятствиями
     let hasCollision = false;
     for (const obstacle of obstacles) {
-      if (checkCollision(
+      if (checkCollisionRect(
         { x: newX - 15, y: newY - 10, width: 30, height: 20 },
-        obstacle
+        { x: obstacle.x, y: obstacle.y, width: obstacle.width, height: obstacle.height }
       )) {
         hasCollision = true;
         break;
+      }
+    }
+    
+    // Проверка столкновения с врагами
+    for (const enemy of enemies) {
+      if (enemy.alive) {
+        const distance = Math.hypot(newX - enemy.x, newY - enemy.y);
+        if (distance < 35) { // Минимальное расстояние между танками
+          hasCollision = true;
+          break;
+        }
       }
     }
     
@@ -551,13 +678,12 @@ const TankGame = () => {
         
         // Проверяем, не столкнулась ли пуля с препятствием
         let hitObstacle = false;
-        for (const obstacle of obstacles) {
+        obstacles.forEach(obstacle => {
           if (newX >= obstacle.x && newX <= obstacle.x + obstacle.width &&
               newY >= obstacle.y && newY <= obstacle.y + obstacle.height) {
             hitObstacle = true;
-            break;
           }
-        }
+        });
         
         if (hitObstacle) {
           return { ...bullet, active: false };
