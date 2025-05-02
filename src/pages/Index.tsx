@@ -1,11 +1,12 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+
+import TankGame from '@/components/TankGame';
 
 const Index = () => {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
-      <div className="text-center">
-        <h1 className="text-4xl font-bold mb-4 color-black text-black">Добро пожаловать!</h1>
-        <p className="text-xl text-gray-600">тут будет отображаться ваш проект</p>
+    <div className="min-h-screen flex flex-col items-center justify-center bg-gray-100 p-4">
+      <h1 className="text-3xl font-bold mb-6 text-black">Танковая Битва</h1>
+      <div className="w-full max-w-4xl bg-white rounded-lg shadow-xl overflow-hidden p-2">
+        <TankGame />
       </div>
     </div>
   );
