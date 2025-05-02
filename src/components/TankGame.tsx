@@ -30,6 +30,7 @@ interface Obstacle extends Position {
 const TankGame = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameLoopRef = useRef<number | null>(null);
+  const enemiesRef = useRef<Tank[]>([]);
   const [playerTank, setPlayerTank] = useState<Tank>({ 
     x: 100, 
     y: 300, 
@@ -49,6 +50,11 @@ const TankGame = () => {
   const [gameActive, setGameActive] = useState(true);
   const [waveCompleted, setWaveCompleted] = useState(false);
   const [newWaveCountdown, setNewWaveCountdown] = useState(0);
+
+  // Синхронизация ref с состоянием
+  useEffect(() => {
+    enemiesRef.current = enemies;
+  }, [enemies]);
 
   // Создание препятствий и начало новой игры
   const initGame = useCallback(() => {
@@ -99,12 +105,14 @@ const TankGame = () => {
     setNewWaveCountdown(0);
     
     // Генерируем первую волну противников
-    spawnEnemies(1);
+    setTimeout(() => {
+      createEnemies(1);
+    }, 500);
   }, []);
 
-  // Спавн противников в зависимости от номера волны
-  const spawnEnemies = useCallback((waveNumber: number) => {
-    console.log(`Spawning enemies for wave ${waveNumber}`);
+  // Создание противников для новой волны
+  const createEnemies = useCallback((waveNumber: number) => {
+    console.log(`СОЗДАЕМ ПРОТИВНИКОВ ДЛЯ ВОЛНЫ ${waveNumber}`);
     
     if (!canvasRef.current) return;
     
@@ -175,6 +183,7 @@ const TankGame = () => {
       });
     }
     
+    console.log(`Создано ${newEnemies.length} противников`);
     setEnemies(newEnemies);
     setWaveCompleted(false);
   }, [playerTank, obstacles]);
@@ -301,7 +310,7 @@ const TankGame = () => {
     if (!gameActive) return;
     
     const enemyShootInterval = setInterval(() => {
-      enemies.forEach(enemy => {
+      enemiesRef.current.forEach(enemy => {
         if (enemy.alive && Math.random() < 0.1) { // 10% шанс выстрела каждую секунду
           enemyShoot(enemy);
         }
@@ -309,7 +318,7 @@ const TankGame = () => {
     }, 1000);
     
     return () => clearInterval(enemyShootInterval);
-  }, [enemies, enemyShoot, gameActive]);
+  }, [enemyShoot, gameActive]);
 
   // Эффект для запуска новой волны после завершения текущей
   useEffect(() => {
@@ -326,13 +335,17 @@ const TankGame = () => {
       const nextWave = wave + 1;
       setWave(nextWave);
       setScore(prev => prev + 1);
-      spawnEnemies(nextWave);
+      
+      setTimeout(() => {
+        console.log(`Начинаем волну ${nextWave}`);
+        createEnemies(nextWave);
+      }, 500);
     }
     
     return () => {
       if (countdownTimer) clearTimeout(countdownTimer);
     };
-  }, [waveCompleted, newWaveCountdown, wave, gameActive, spawnEnemies]);
+  }, [waveCompleted, newWaveCountdown, wave, gameActive, createEnemies]);
 
   // ИИ врага (простое преследование игрока)
   const updateEnemies = useCallback(() => {
@@ -426,7 +439,7 @@ const TankGame = () => {
   const checkWaveCompletion = useCallback(() => {
     // Проверяем, все ли враги уничтожены
     if (enemies.length > 0 && enemies.every(enemy => !enemy.alive) && !waveCompleted) {
-      console.log("Wave completed! Starting next wave soon...");
+      console.log("Волна завершена! Скоро начнется следующая...");
       setWaveCompleted(true);
       setNewWaveCountdown(3); // 3 секунды до следующей волны
     }
@@ -480,6 +493,11 @@ const TankGame = () => {
       
       // Рисуем пули
       drawBullets(ctx);
+      
+      // Отладочная информация
+      ctx.fillStyle = 'black';
+      ctx.font = '12px Arial';
+      ctx.fillText(`Противников: ${enemies.length} (живых: ${enemies.filter(e => e.alive).length})`, 10, 20);
       
       // Проверка окончания волны
       checkWaveCompletion();
